@@ -709,6 +709,161 @@ export const Store = mst.types
         }
       }
     },
+    applyMateriaPlan(gearMateriaStats: Map<G.GearId, { stat: G.Stat | undefined, grade: G.MateriaGrade }[]>): void {
+      for (const [ gearId, materiaStats ] of gearMateriaStats.entries()) {
+        const gear = self.gears.get(gearId as any) as IGear;
+        for (let i = 0; i < gear.materias.length; i++) {
+          const materia = gear.materias[i];
+          const plan = materiaStats[i];
+          const fallbackGrade = materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1];
+          materia.grade = plan?.grade ?? fallbackGrade;
+          materia.stat = plan?.stat;
+        }
+      }
+    },
+    optimizeMateriaForGcd(targetGcd: number): { success: boolean, achievedGcd?: number, damage?: number } {
+      if (Number.isNaN(targetGcd) || targetGcd <= 0) return { success: false };
+      if (self.job === undefined) return { success: false };
+      const speedStat: G.Stat | undefined = (self.schema.stats.includes('SKS') && 'SKS') ||
+        (self.schema.stats.includes('SPS') && 'SPS') || undefined;
+      if (speedStat === undefined) return { success: false };
+
+      const snapshot = mst.getSnapshot(self);
+      const replica = Store.create(snapshot);
+      replica.unprotect();
+
+      const materiaSlots: IMateria[] = [];
+      for (const gear of replica.equippedGears.values()) {
+        if (gear === undefined || gear.isFood) continue;
+        for (const materia of gear.materias) {
+          const meldableGrades = materia.meldableGrades;
+          const defaultGrade = meldableGrades[meldableGrades.length - 1];
+          materia.meld(undefined, defaultGrade);
+          materiaSlots.push(materia);
+        }
+      }
+
+      // Sort by materia strength so we use the strongest slots first (matching python optimizer)
+      materiaSlots.sort((a, b) => {
+        const aVal = G.materias[speedStat]![a.grade! - 1];
+        const bVal = G.materias[speedStat]![b.grade! - 1];
+        return bVal - aVal;
+      });
+
+      const candidateStats = ['CRT', 'DET', 'DHT', 'TEN'].filter(stat =>
+        self.schema.stats.includes(stat as G.Stat) && stat in G.materias) as G.Stat[];
+      if (self.schema.stats.includes(speedStat)) candidateStats.push(speedStat);
+      const levelMod = G.jobLevelModifiers[self.jobLevel];
+      const { statModifiers, mainStat, traitDamageMultiplier, partyBonus } = self.schema;
+      const floorFn = (value: number, useFloor: boolean) => useFloor ? Math.floor(value) : value;
+      const computeDamage = (stats: G.Stats, useFloor: boolean) => {
+        if (statModifiers === undefined || mainStat === undefined || traitDamageMultiplier === undefined) return -Infinity;
+        const floorOrNot = (value: number) => floorFn(value, useFloor);
+        const attackMainStat = mainStat === 'VIT' ? 'STR' : mainStat;
+        const bluAetherialMimicry = self.job === 'BLU' ? 200 : 0;
+        const weaponDamage = floorOrNot(levelMod.main * statModifiers[attackMainStat]! / 1000) +
+          ((mainStat === 'MND' || mainStat === 'INT' ? stats.MDMG : stats.PDMG) ?? 0) +
+          (self.job === 'BLU' ? G.bluMdmgAdditions[stats.INT! - self.baseStats.INT!] ?? 0 : 0);
+        const mainDamage = floorOrNot((mainStat === 'VIT' ? levelMod.apTank : levelMod.ap) *
+          (floorOrNot((stats[attackMainStat] ?? 0) * (partyBonus ?? 1.05)) - levelMod.main) / levelMod.main + 100) / 100;
+        const crtChance = floorOrNot(200 * (stats.CRT! - levelMod.sub) / levelMod.div + 50 + bluAetherialMimicry) / 1000;
+        const crtDamage = floorOrNot(200 * (stats.CRT! - levelMod.sub) / levelMod.div + 1400) / 1000;
+        const detDamage = floorOrNot((140 * (stats.DET! - levelMod.main) / levelMod.det + 1000) / levelMod.detTrunc) * levelMod.detTrunc / 1000;
+        const dhtChance = floorOrNot(550 * (stats.DHT! - levelMod.sub) / levelMod.div + bluAetherialMimicry) / 1000;
+        const tenDamage = floorOrNot(112 * ((stats.TEN ?? levelMod.sub) - levelMod.sub) / levelMod.div + 1000) / 1000;
+        return 0.01 * weaponDamage * mainDamage * detDamage * tenDamage * traitDamageMultiplier *
+          ((crtDamage - 1) * crtChance + 1) * (0.25 * dhtChance + 1);
+      };
+
+      const tolerance = 0.001;
+
+      const getEffects = () => replica.equippedEffects;
+      const currentEffects = getEffects();
+      if (currentEffects === undefined || Number.isNaN(currentEffects.gcd) || Number.isNaN(currentEffects.damage)) {
+        return { success: false };
+      }
+
+      // Phase 1: force meet GCD threshold using strongest speed materia first
+      const speedQueue = [...materiaSlots];
+      let effects = currentEffects;
+      while (effects.gcd > targetGcd + tolerance) {
+        let pickedIndex = -1;
+        let pickedEffects: typeof effects | undefined;
+        let pickedGain = 0;
+        for (let i = 0; i < speedQueue.length; i++) {
+          const slot = speedQueue[i];
+          const remaining = slot.gear.currentMeldableStats[speedStat] ?? 0;
+          if (remaining <= 0) continue;
+          const grade = slot.grade ?? slot.meldableGrades[slot.meldableGrades.length - 1];
+          if (grade === undefined) continue;
+          const beforeSpeed = replica.equippedStats[speedStat] ?? 0;
+          slot.meld(speedStat, grade);
+          const candidateEffects = getEffects();
+          const afterSpeed = replica.equippedStats[speedStat] ?? beforeSpeed;
+          const speedGain = afterSpeed - beforeSpeed;
+          if (candidateEffects !== undefined && !Number.isNaN(candidateEffects.gcd) && speedGain > 0) {
+            if (pickedEffects === undefined || candidateEffects.gcd < pickedEffects.gcd - tolerance ||
+              (Math.abs(candidateEffects.gcd - pickedEffects.gcd) <= tolerance && speedGain > pickedGain)) {
+              pickedEffects = candidateEffects;
+              pickedIndex = i;
+              pickedGain = speedGain;
+            }
+          }
+          slot.meld(undefined, grade);
+        }
+        if (pickedIndex === -1 || pickedEffects === undefined) {
+          return { success: false, achievedGcd: effects.gcd, damage: effects.damage };
+        }
+        speedQueue[pickedIndex].meld(speedStat, speedQueue[pickedIndex].grade ?? speedQueue[pickedIndex].meldableGrades[speedQueue[pickedIndex].meldableGrades.length - 1]);
+        effects = pickedEffects;
+        speedQueue.splice(pickedIndex, 1);
+      }
+
+      // Phase 2: fill remaining slots for damage while respecting GCD
+      for (const materia of speedQueue) {
+        const baseDamageSmooth = computeDamage(replica.equippedStats, false);
+        let bestStat: G.Stat | undefined;
+        let bestDamage = baseDamageSmooth;
+        for (const stat of candidateStats) {
+          const remaining = materia.gear.currentMeldableStats[stat] ?? 0;
+          if (remaining <= 0) continue;
+          const grade = materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1];
+          materia.meld(stat, grade);
+          const newEffects = getEffects();
+          if (newEffects !== undefined && !Number.isNaN(newEffects.gcd) && newEffects.gcd <= targetGcd + tolerance) {
+            const smoothDamage = computeDamage(replica.equippedStats, false);
+            if (smoothDamage > bestDamage) {
+              bestDamage = smoothDamage;
+              bestStat = stat;
+            }
+          }
+          materia.meld(undefined, grade);
+        }
+        if (bestStat !== undefined) {
+          materia.meld(bestStat, materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1]);
+        }
+      }
+
+      const finalEffects = getEffects();
+      if (finalEffects === undefined || Number.isNaN(finalEffects.gcd) || Number.isNaN(finalEffects.damage)) {
+        return { success: false };
+      }
+      if (finalEffects.gcd > targetGcd + tolerance) {
+        return { success: false, achievedGcd: finalEffects.gcd, damage: finalEffects.damage };
+      }
+
+      const gearMateriaStats = new Map<G.GearId, { stat: G.Stat | undefined, grade: G.MateriaGrade }[]>();
+      for (const gear of replica.equippedGears.values()) {
+        if (gear === undefined || gear.isFood) continue;
+        gearMateriaStats.set(gear.id, gear.materias.map(m => ({ stat: m.stat, grade: m.grade! })));
+      }
+      this.applyMateriaPlan(gearMateriaStats);
+      const appliedEffects = this.equippedEffects;
+      if (appliedEffects === undefined || Number.isNaN(appliedEffects.gcd) || Number.isNaN(appliedEffects.damage)) {
+        return { success: false };
+      }
+      return { success: true, achievedGcd: appliedEffects.gcd, damage: appliedEffects.damage };
+    },
     toggleShowAllMaterias(): void {
       self.showAllMaterias = !self.showAllMaterias;
     },
