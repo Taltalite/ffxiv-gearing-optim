@@ -739,7 +739,9 @@ export const Store = mst.types
         if (gear === undefined || gear.isFood) continue;
         for (const materia of gear.materias) {
 
-          materia.meld(undefined, materia.meldableGrades[0]);
+          const defaultGrade = materia.grade ?? materia.meldableGrades[0];
+          materia.meld(undefined, defaultGrade);
+
           materiaSlots.push(materia);
         }
       }
@@ -793,14 +795,19 @@ export const Store = mst.types
           const slot = speedQueue[i];
           const remaining = slot.gear.currentMeldableStats[speedStat] ?? 0;
           if (remaining <= 0) continue;
-          slot.meld(speedStat);
+
+          const grade = slot.grade ?? slot.meldableGrades[0];
+          slot.meld(speedStat, grade);
+
           const candidateEffects = getEffects();
           if (candidateEffects !== undefined && !Number.isNaN(candidateEffects.gcd) && candidateEffects.gcd < effects.gcd) {
             effects = candidateEffects;
             pickedIndex = i;
             break;
           }
-          slot.meld(undefined);
+
+          slot.meld(undefined, grade);
+
         }
         if (pickedIndex === -1) {
           return { success: false, achievedGcd: effects.gcd, damage: effects.damage };
@@ -816,7 +823,10 @@ export const Store = mst.types
         for (const stat of candidateStats) {
           const remaining = materia.gear.currentMeldableStats[stat] ?? 0;
           if (remaining <= 0) continue;
-          materia.meld(stat);
+
+          const grade = materia.grade ?? materia.meldableGrades[0];
+          materia.meld(stat, grade);
+
           const newEffects = getEffects();
           if (newEffects !== undefined && !Number.isNaN(newEffects.gcd) && newEffects.gcd <= targetGcd + tolerance) {
             const smoothDamage = computeDamage(replica.equippedStats, false);
@@ -825,10 +835,12 @@ export const Store = mst.types
               bestStat = stat;
             }
           }
-          materia.meld(undefined);
+
+          materia.meld(undefined, grade);
         }
         if (bestStat !== undefined) {
-          materia.meld(bestStat);
+          materia.meld(bestStat, materia.grade ?? materia.meldableGrades[0]);
+
         }
       }
 
