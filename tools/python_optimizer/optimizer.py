@@ -19,8 +19,8 @@ from typing import Any, Dict, List, Optional, Tuple
 # ==========================================
 # Level 100 参数
 LEVEL_MOD = {
-    "main": 440, "sub": 420, "div": 2780, "det": 2780, 
-    "ap": 237, "apTank": 190, "hp": 40, 
+    "main": 440, "sub": 420, "div": 2780, "det": 2780, "detTrunc": 1,
+    "ap": 237, "apTank": 190, "hp": 40,
     "vit": 30.1, "vitTank": 43.0
 }
 
@@ -69,82 +69,71 @@ def get_stat_with_food(stat_name: str, base_val: int, food_config: Dict) -> int:
     bonus = min(math.floor(base_val * percent / 100), cap)
     return base_val + bonus
 
-def get_gcd(speed_stat: int, haste_reduction: int = 0) -> float:
-    """计算 GCD"""
+def get_gcd(speed_stat: int, haste_reduction: int = 0, gcd_modifier: int = 100) -> float:
+    """计算 GCD，兼容职业 GCD 修正与外部急速减免"""
     sub = LEVEL_MOD["sub"]
     div = LEVEL_MOD["div"]
-    # 官方公式
     step1 = 1000 - math.floor(130 * (speed_stat - sub) / div)
     step2 = math.floor(step1 * 2500 / 1000)
     step3 = math.floor(step2 * (100 - haste_reduction) / 100)
-    return math.floor(step3 * 100 / 1000) / 100
+    step4 = math.floor(step3 * gcd_modifier / 1000)
+    return math.floor(step4 * 100 / 1000) / 100
 
 def calc_damage_multiplier(stats: Dict[str, int], config: Dict, use_floor: bool = True) -> float:
-    """
-    计算综合伤害期望倍率
-    :param use_floor: True=使用官方向下取整(计算最终面板用), False=使用平滑公式(求解器寻路用)
-    """
+    """按照前端同款公式计算综合伤害期望倍率"""
     main_key = config["main_stat"]
-    job_mod = config.get("job_mod", DEFAULT_JOB_MOD) # 需要在 config 里加 job_mod，默认 115
-    
+    job_schema = config.get("job_schema", {})
+    stat_mod = job_schema.get("stat_modifiers", {})
+    trait_mult = job_schema.get("trait_damage_multiplier", 1.0)
+    party_bonus = job_schema.get("party_bonus", 1.05)
+
     # 0. 辅助函数：根据模式选择是否 floor
     def do_math(val):
         return math.floor(val) if use_floor else val
 
-    # 1. 武器伤害 (Weapon Damage) - 修正核心
-    # 物理职业看 PDMG，法系看 MDMG
-    # 简易判断：如果主属性是 INT/MND 则用 MDMG，否则 PDMG
-    wd_val = stats.get("MDMG", 0) if main_key in ["INT", "MND"] else stats.get("PDMG", 0)
-    
-    # WD 公式: (Main * JobMod / 1000 + WD)
-    # *注意: 这里是简化版系数，主要为了保证 WD 差异能体现出来
     main_base = LEVEL_MOD["main"]
-    f_wd = (do_math(main_base * job_mod / 1000) + wd_val)
-
-    # 2. 主属性 (AP/Attack Power)
-    is_tank = (config.get("role") == "tank") or (main_key == "VIT")
-    if is_tank:
-        ap_val = stats.get("STR", 0)
-        ap_coeff = LEVEL_MOD["apTank"]
-    else:
-        ap_val = stats.get(main_key, 0)
-        ap_coeff = LEVEL_MOD["ap"]
-        
-    f_ap = (do_math(ap_coeff * (ap_val - main_base) / main_base) + 100) / 100
-
-    # 3. 副属性计算
     sub_base = LEVEL_MOD["sub"]
     div = LEVEL_MOD["div"]
+    det_trunc = LEVEL_MOD.get("detTrunc", 1)
 
-    # Crit
+    # 1. 武器伤害 (Weapon Damage)
+    attack_main = "STR" if main_key == "VIT" else main_key
+    job_mod = stat_mod.get(attack_main, config.get("job_mod", DEFAULT_JOB_MOD))
+    wd_val = stats.get("MDMG", 0) if main_key in ["INT", "MND"] else stats.get("PDMG", 0)
+    weapon_damage = do_math(main_base * job_mod / 1000) + wd_val
+
+    # 2. 主属性 (Attack Power)
+    is_tank = (config.get("role") == "tank") or (main_key == "VIT")
+    ap_coeff = LEVEL_MOD["apTank"] if is_tank else LEVEL_MOD["ap"]
+    attack_stat = stats.get(attack_main, 0)
+    attack_with_party = do_math(attack_stat * party_bonus)
+    main_damage = (do_math(ap_coeff * (attack_with_party - main_base) / main_base) + 100) / 100
+
+    # 3. 副属性计算
     crt = stats.get("CRT", 0)
     prob_crt = do_math(200 * (crt - sub_base) / div + 50) / 1000
     dmg_crt = do_math(200 * (crt - sub_base) / div + 1400) / 1000
     f_crt = 1 + (prob_crt * (dmg_crt - 1))
 
-    # Direct Hit
     dht = stats.get("DHT", 0)
     prob_dht = do_math(550 * (dht - sub_base) / div) / 1000
     f_dht = 1 + (prob_dht * 0.25)
 
-    # Det
     det = stats.get("DET", 0)
-    f_det = do_math(140 * (det - main_base) / LEVEL_MOD["det"] + 1000) / 1000
+    f_det = do_math((140 * (det - main_base) / LEVEL_MOD["det"] + 1000) / det_trunc) * det_trunc / 1000
 
-    # Tenacity (Tank only)
     f_ten = 1.0
     if is_tank:
         ten = stats.get("TEN", 0)
         f_ten = do_math(112 * (ten - sub_base) / div + 1000) / 1000
-    
-    # 速度乘区 (对于 DoT/AA 职业很重要，但为了简化，我们假设速度只为了阈值)
-    # 平滑模式下给予速度微小收益，防止求解器完全无视
+
+    # 速度系数仅用于平滑求解，避免完全无视速度
     f_spd = 1.0
     if not use_floor:
         sks = stats.get("SKS", 0) + stats.get("SPS", 0)
-        f_spd = 1.0 + (sks * 0.00001) # 极低权重，仅为了让 SKS 在没达标时有点存在感
+        f_spd = 1.0 + (sks * 0.00001)
 
-    return f_wd * f_ap * f_crt * f_dht * f_det * f_ten * f_spd
+    return 0.01 * weapon_damage * main_damage * f_det * f_ten * trait_mult * f_crt * f_dht * f_spd
 
 # ==========================================
 # 3. 智能魔晶石求解器 (平滑寻路版)
@@ -221,6 +210,9 @@ class SmartMateriaSolver:
         
         # --- Phase 1: 强制满足 GCD 阈值 ---
         haste = self.config.get("haste_reduction", 0)
+        gcd_modifier = self.config.get("job_schema", {}).get("stat_modifiers", {}).get("gcd", 100)
+        if self.config.get("job_level", 100) < 80:
+            gcd_modifier = 100
         target_gcd = self.config["gcd_threshold"]
         
         # 将速度孔需求单独提取，避免大石头被浪费
@@ -233,7 +225,7 @@ class SmartMateriaSolver:
         while True:
             eff_stats = self._get_effective_stats(self.raw_stats)
             current_spd = eff_stats.get(self.speed_stat_name, 0)
-            if get_gcd(current_spd, haste) <= target_gcd + 0.001:
+            if get_gcd(current_spd, haste, gcd_modifier) <= target_gcd + 0.001:
                 break # 达标
             
             if not slots_queue:
@@ -313,13 +305,13 @@ class SmartMateriaSolver:
 # ==========================================
 def load_and_filter_data(config: Dict) -> Dict:
     gears_flat = []
-    
-    buckets = {i: [] for i in [SLOT_WEAPON_1H, SLOT_OFF_HAND] + SLOTS_LEFT + SLOTS_ACC + [SLOT_RING]} 
-    
+
+    buckets = {i: [] for i in [SLOT_WEAPON_1H, SLOT_OFF_HAND] + SLOTS_LEFT + SLOTS_ACC + [SLOT_RING]}
+
     raw_path = config["data_paths"]
     # 路径清洗
     paths = glob.glob(raw_path.strip().strip("'").strip('"'))
-    
+
     if not paths:
         print(f"❌ Error: 找不到数据文件: {raw_path}")
         sys.exit(1)
@@ -329,7 +321,7 @@ def load_and_filter_data(config: Dict) -> Dict:
     try:
         file_uri = Path(paths[0]).resolve().as_uri()
         res = subprocess.run(
-            ["node", "--input-type=module", "-e", script, file_uri], 
+            ["node", "--input-type=module", "-e", script, file_uri],
             capture_output=True, text=True, encoding="utf-8"
         )
         data = json.loads(res.stdout)
@@ -339,8 +331,9 @@ def load_and_filter_data(config: Dict) -> Dict:
         sys.exit(1)
 
     valid_cats = config.get("job_cat_ids", [])
-    min_il = config.get("min_il", 0)
-    max_il = config.get("max_il", 9999)
+    base_min_il = config.get("min_il", 0)
+    base_max_il = config.get("max_il", 9999)
+    extra_ranges = config.get("extra_il_ranges", [])
 
     loaded_count = 0
     for g in gears_flat:
@@ -350,15 +343,27 @@ def load_and_filter_data(config: Dict) -> Dict:
             slot = int(g.get("slot", -1))
         except: continue
 
-        if lvl < min_il or lvl > max_il: continue
         if valid_cats and cat not in valid_cats: continue
-        
+
+        range_id = None
+        if base_min_il <= lvl <= base_max_il:
+            range_id = 0
+        else:
+            for idx, r in enumerate(extra_ranges, start=1):
+                if lvl >= r.get("min_il", 0) and lvl <= r.get("max_il", 9999):
+                    range_id = idx
+                    break
+
+        if range_id is None:
+            continue
+
         if slot == SLOT_WEAPON_2H: slot = SLOT_WEAPON_1H
-        
+
         if slot in buckets:
+            g["_il_range"] = range_id
             buckets[slot].append(g)
             loaded_count += 1
-            
+
     print(f"✅ 加载完成: {loaded_count} 个符合条件的装备。")
     return buckets
 
@@ -419,6 +424,9 @@ def main():
     
     best_result = None
     best_score = -1
+
+    extra_ranges = config.get("extra_il_ranges", [])
+    range_limits = {idx + 1: r.get("max_items", None) for idx, r in enumerate(extra_ranges)}
     
     counter = 0
     for gear_tuple in non_ring_combos:
@@ -427,6 +435,21 @@ def main():
             if counter % 50000 == 0: print(f"⏳ {counter}/{total_ops} ...")
             
             full_set = list(gear_tuple) + list(r_pair)
+
+            # 限制额外高装等装备数量，模拟部分刷取高装等的开荒场景
+            valid_combo = True
+            range_counter = {}
+            for item in full_set:
+                rid = item.get("_il_range", 0)
+                if rid > 0:
+                    range_counter[rid] = range_counter.get(rid, 0) + 1
+                    limit = range_limits.get(rid)
+                    if limit is not None and range_counter[rid] > limit:
+                        valid_combo = False
+                        break
+
+            if not valid_combo:
+                continue
             
             # 计算装备白值
             current_raw = base_stats_clean.copy()
@@ -454,7 +477,10 @@ def main():
         print("="*50)
         
         spd_key = "SPS" if config.get("main_stat") in ["INT", "MND"] else "SKS"
-        final_gcd = get_gcd(best_result['stats'][spd_key], config.get("haste_reduction", 0))
+        gcd_modifier = config.get("job_schema", {}).get("stat_modifiers", {}).get("gcd", 100)
+        if config.get("job_level", 100) < 80:
+            gcd_modifier = 100
+        final_gcd = get_gcd(best_result['stats'][spd_key], config.get("haste_reduction", 0), gcd_modifier)
         print(f"⏱️ GCD: {final_gcd}s")
         
         print("\n[ 面板属性 (含食物) ]")
