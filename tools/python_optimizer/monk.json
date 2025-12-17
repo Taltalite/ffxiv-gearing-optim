@@ -1,0 +1,34 @@
+{
+  "job": "MNK",
+  "job_cat_ids": [41, 65, 84],
+  "main_stat": "STR",
+  "gcd_threshold": 1.94,
+  "haste_reduction": 20,
+  "min_il": 770,
+  "max_il": 775,
+  "data_paths": "D:\\ffxiv-gearing-optim\\data\\out\\gears-recent.js",
+  "job_schema": {
+    "stats": ["STR", "CRT", "DET", "DHT", "SKS", "TEN", "VIT"],
+    "party_bonus": 1.05
+  },
+  "//_comment_1": "下方填写裸装属性(穿水晶不穿装备)",
+  "base_stats": {
+    "STR": 484,
+    "DEX": 400,
+    "VIT": 400,
+    "CRT": 420,
+    "DET": 440,
+    "DHT": 420,
+    "SKS": 420,
+    "TEN": 420
+  },
+
+  "//_comment_2": "下方填写食物加成 [百分比(整数), 上限值]",
+  "food": {
+    "name": "烤干酪辣味玉米片",
+    "stats": {
+       "CRT": [10, 151],
+       "SKS": [10, 91]
+    }
+  }
+}
