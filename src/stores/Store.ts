@@ -715,11 +715,9 @@ export const Store = mst.types
         for (let i = 0; i < gear.materias.length; i++) {
           const materia = gear.materias[i];
           const plan = materiaStats[i];
-          materia.grade = materia.meldableGrades[0];
+          const fallbackGrade = materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1];
+          materia.grade = plan?.grade ?? fallbackGrade;
           materia.stat = plan?.stat;
-          if (plan?.grade !== undefined) {
-            materia.grade = plan.grade;
-          }
         }
       }
     },
@@ -738,11 +736,9 @@ export const Store = mst.types
       for (const gear of replica.equippedGears.values()) {
         if (gear === undefined || gear.isFood) continue;
         for (const materia of gear.materias) {
-
           const meldableGrades = materia.meldableGrades;
-          const defaultGrade = materia.grade ?? meldableGrades[meldableGrades.length - 1];
+          const defaultGrade = meldableGrades[meldableGrades.length - 1];
           materia.meld(undefined, defaultGrade);
-
           materiaSlots.push(materia);
         }
       }
@@ -796,10 +792,8 @@ export const Store = mst.types
           const slot = speedQueue[i];
           const remaining = slot.gear.currentMeldableStats[speedStat] ?? 0;
           if (remaining <= 0) continue;
-
           const grade = slot.grade ?? slot.meldableGrades[slot.meldableGrades.length - 1];
           slot.meld(speedStat, grade);
-
           const candidateEffects = getEffects();
           if (candidateEffects !== undefined && !Number.isNaN(candidateEffects.gcd) && candidateEffects.gcd < effects.gcd) {
             effects = candidateEffects;
