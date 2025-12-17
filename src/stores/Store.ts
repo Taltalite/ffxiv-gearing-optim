@@ -743,6 +743,7 @@ export const Store = mst.types
       }
       const candidateStats = self.schema.stats.filter(stat =>
         ['CRT', 'DET', 'DHT', 'TEN', speedStat].includes(stat) && stat in G.materias) as G.Stat[];
+
       const withNone: (G.Stat | undefined)[] = [...candidateStats, undefined];
       const evaluate = () => replica.equippedEffects?.damage ?? -Infinity;
 
@@ -762,6 +763,7 @@ export const Store = mst.types
           materia.meld(bestStat as any);
         }
       }
+
       const initialEffects = replica.equippedEffects;
       if (initialEffects === undefined) return { success: false };
       let effects: NonNullable<typeof initialEffects> = initialEffects;
@@ -792,7 +794,9 @@ export const Store = mst.types
         }
         if (bestMateria !== undefined) {
           bestMateria.meld(speedStat);
+
           effects = replica.equippedEffects!;
+
           gcdImproved = true;
         }
       }
