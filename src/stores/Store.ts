@@ -738,6 +738,7 @@ export const Store = mst.types
       for (const gear of replica.equippedGears.values()) {
         if (gear === undefined || gear.isFood) continue;
         for (const materia of gear.materias) {
+
           materia.meld(undefined, materia.meldableGrades[0]);
           materiaSlots.push(materia);
         }
@@ -837,6 +838,7 @@ export const Store = mst.types
       }
       if (finalEffects.gcd > targetGcd + tolerance) {
         return { success: false, achievedGcd: finalEffects.gcd, damage: finalEffects.damage };
+
       }
 
       const gearMateriaStats = new Map<G.GearId, { stat: G.Stat | undefined, grade: G.MateriaGrade }[]>();
@@ -845,11 +847,13 @@ export const Store = mst.types
         gearMateriaStats.set(gear.id, gear.materias.map(m => ({ stat: m.stat, grade: m.grade! })));
       }
       this.applyMateriaPlan(gearMateriaStats);
+
       const appliedEffects = this.equippedEffects;
       if (appliedEffects === undefined || Number.isNaN(appliedEffects.gcd) || Number.isNaN(appliedEffects.damage)) {
         return { success: false };
       }
       return { success: true, achievedGcd: appliedEffects.gcd, damage: appliedEffects.damage };
+
     },
     toggleShowAllMaterias(): void {
       self.showAllMaterias = !self.showAllMaterias;
