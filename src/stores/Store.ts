@@ -743,6 +743,7 @@ export const Store = mst.types
       }
       const candidateStats = self.schema.stats.filter(stat =>
         ['CRT', 'DET', 'DHT', 'TEN', speedStat].includes(stat) && stat in G.materias) as G.Stat[];
+
       const withNone: (G.Stat | undefined)[] = [...candidateStats, undefined];
       const evaluate = () => replica.equippedEffects?.damage ?? -Infinity;
 
@@ -762,10 +763,12 @@ export const Store = mst.types
           materia.meld(bestStat as any);
         }
       }
+
       const initialEffects = replica.equippedEffects;
       if (initialEffects === undefined || Number.isNaN(initialEffects.gcd) || Number.isNaN(initialEffects.damage)) {
         return { success: false };
       }
+
       let effects: NonNullable<typeof initialEffects> = initialEffects;
 
       // Add speed materia greedily until reaching target gcd
@@ -775,7 +778,9 @@ export const Store = mst.types
         let bestMateria: IMateria | undefined;
         let bestDamage = -Infinity;
         let bestGcd = effects.gcd;
+
         let bestAboveTarget = effects.gcd >= targetGcd;
+
         for (const materia of materiaSlots) {
           if (!materia.meldableGrades.includes(materia.grade!)) continue;
           if ((materia.gear.currentMeldableStats[speedStat] ?? 0) <= 0 && materia.stat !== speedStat) continue;
@@ -783,6 +788,7 @@ export const Store = mst.types
           const originalStat = materia.stat;
           materia.meld(speedStat);
           const newEffects = replica.equippedEffects;
+
           if (newEffects !== undefined && !Number.isNaN(newEffects.gcd) && newEffects.gcd < effects.gcd) {
             const candidateAboveTarget = newEffects.gcd >= targetGcd;
             const preferCandidate = () => {
@@ -805,13 +811,16 @@ export const Store = mst.types
                 (newEffects.gcd === bestGcd && newEffects.damage > bestDamage)) {
                 preferCandidate();
               }
+
             }
           }
           materia.meld(originalStat);
         }
         if (bestMateria !== undefined) {
           bestMateria.meld(speedStat);
+
           effects = replica.equippedEffects!;
+
           gcdImproved = true;
         }
       }
@@ -851,11 +860,13 @@ export const Store = mst.types
         gearMateriaStats.set(gear.id, gear.materias.map(m => ({ stat: m.stat, grade: m.grade! })));
       }
       this.applyMateriaPlan(gearMateriaStats);
+
       const finalEffects = this.equippedEffects;
       if (finalEffects === undefined || Number.isNaN(finalEffects.gcd) || Number.isNaN(finalEffects.damage)) {
         return { success: false };
       }
       return { success: true, achievedGcd: finalEffects.gcd, damage: finalEffects.damage };
+
     },
     toggleShowAllMaterias(): void {
       self.showAllMaterias = !self.showAllMaterias;
