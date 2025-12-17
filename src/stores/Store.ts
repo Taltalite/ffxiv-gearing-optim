@@ -788,23 +788,34 @@ export const Store = mst.types
       let effects = currentEffects;
       while (effects.gcd > targetGcd + tolerance) {
         let pickedIndex = -1;
+        let pickedEffects: typeof effects | undefined;
+        let pickedGain = 0;
         for (let i = 0; i < speedQueue.length; i++) {
           const slot = speedQueue[i];
           const remaining = slot.gear.currentMeldableStats[speedStat] ?? 0;
           if (remaining <= 0) continue;
           const grade = slot.grade ?? slot.meldableGrades[slot.meldableGrades.length - 1];
+          if (grade === undefined) continue;
+          const beforeSpeed = replica.equippedStats[speedStat] ?? 0;
           slot.meld(speedStat, grade);
           const candidateEffects = getEffects();
-          if (candidateEffects !== undefined && !Number.isNaN(candidateEffects.gcd) && candidateEffects.gcd < effects.gcd) {
-            effects = candidateEffects;
-            pickedIndex = i;
-            break;
+          const afterSpeed = replica.equippedStats[speedStat] ?? beforeSpeed;
+          const speedGain = afterSpeed - beforeSpeed;
+          if (candidateEffects !== undefined && !Number.isNaN(candidateEffects.gcd) && speedGain > 0) {
+            if (pickedEffects === undefined || candidateEffects.gcd < pickedEffects.gcd - tolerance ||
+              (Math.abs(candidateEffects.gcd - pickedEffects.gcd) <= tolerance && speedGain > pickedGain)) {
+              pickedEffects = candidateEffects;
+              pickedIndex = i;
+              pickedGain = speedGain;
+            }
           }
           slot.meld(undefined, grade);
         }
-        if (pickedIndex === -1) {
+        if (pickedIndex === -1 || pickedEffects === undefined) {
           return { success: false, achievedGcd: effects.gcd, damage: effects.damage };
         }
+        speedQueue[pickedIndex].meld(speedStat, speedQueue[pickedIndex].grade ?? speedQueue[pickedIndex].meldableGrades[speedQueue[pickedIndex].meldableGrades.length - 1]);
+        effects = pickedEffects;
         speedQueue.splice(pickedIndex, 1);
       }
 
