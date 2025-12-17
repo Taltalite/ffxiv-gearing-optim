@@ -1,6 +1,5 @@
 import * as mobxReact from 'mobx-react-lite';
 import { Radio } from '@rmwc/radio';
-import * as G from '../game';
 import { useStore } from './components/contexts';
 
 export const FilterPanel = mobxReact.observer(() => {
