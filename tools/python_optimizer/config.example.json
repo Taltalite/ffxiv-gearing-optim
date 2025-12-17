@@ -1,0 +1,26 @@
+{
+  "job": "PLD",
+  "job_level": 100,
+  "gcd_threshold": 2.45,
+  "min_item_level": 650,
+  "max_item_level": 999,
+  "include_obsolete": false,
+  "max_items_per_slot": 3,
+  "max_combination_limit": 600000,
+  "max_operation_limit": 600000,
+  "data_paths": {
+    "gear_glob": "data/out/gears-*.js",
+    "extra_gears": ["data/out/gears-recent.js"],
+    "foods": "data/out/foods.js",
+    "job_categories": "data/out/jobCategories.js"
+  },
+  "job_schema": {
+    "stats": ["STR", "CRT", "DET", "DHT", "SKS", "TEN", "VIT"],
+    "stat_modifiers": { "STR": 100, "VIT": 110, "hp": 140 },
+    "main_stat": "VIT",
+    "trait_damage_multiplier": 1.0,
+    "party_bonus": 1.05
+  },
+  "clan_adjustments": {},
+  "allow_food": false
+}
