@@ -100,3 +100,32 @@
   border-top: 1px solid #e0e0e0;
   padding: 12px 16px 14px;
 }
+
+.materia-gcd-optimization {
+  padding: 12px 16px 16px;
+  line-height: 20px;
+}
+
+.materia-gcd-optimization_form {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+
+.materia-gcd-optimization_input {
+  width: 200px;
+}
+
+.materia-gcd-optimization_button {
+  height: 36px;
+}
+
+.materia-gcd-optimization_hint {
+  color: #000000a6;
+}
+
+.materia-gcd-optimization_status {
+  margin-top: 8px;
+  font-weight: bold;
+}
