@@ -743,7 +743,8 @@ export const Store = mst.types
       }
       const candidateStats = self.schema.stats.filter(stat =>
         ['CRT', 'DET', 'DHT', 'TEN', speedStat].includes(stat) && stat in G.materias) as G.Stat[];
-      const withNone: (G.Stat | undefined)[] = candidateStats.concat(undefined);
+
+      const withNone: (G.Stat | undefined)[] = [...candidateStats, undefined];
       const evaluate = () => replica.equippedEffects?.damage ?? -Infinity;
 
       // Greedy baseline: maximize damage without considering gcd
@@ -762,8 +763,10 @@ export const Store = mst.types
           materia.meld(bestStat as any);
         }
       }
-      let effects = replica.equippedEffects;
-      if (effects === undefined) return { success: false };
+
+      const initialEffects = replica.equippedEffects;
+      if (initialEffects === undefined) return { success: false };
+      let effects: NonNullable<typeof initialEffects> = initialEffects;
 
       // Add speed materia greedily until reaching target gcd
       let gcdImproved = true;
@@ -791,7 +794,9 @@ export const Store = mst.types
         }
         if (bestMateria !== undefined) {
           bestMateria.meld(speedStat);
-          effects = replica.equippedEffects;
+
+          effects = replica.equippedEffects!;
+
           gcdImproved = true;
         }
       }
