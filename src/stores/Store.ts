@@ -765,7 +765,10 @@ export const Store = mst.types
       }
 
       const initialEffects = replica.equippedEffects;
-      if (initialEffects === undefined) return { success: false };
+      if (initialEffects === undefined || Number.isNaN(initialEffects.gcd) || Number.isNaN(initialEffects.damage)) {
+        return { success: false };
+      }
+
       let effects: NonNullable<typeof initialEffects> = initialEffects;
 
       // Add speed materia greedily until reaching target gcd
@@ -775,6 +778,9 @@ export const Store = mst.types
         let bestMateria: IMateria | undefined;
         let bestDamage = -Infinity;
         let bestGcd = effects.gcd;
+
+        let bestAboveTarget = effects.gcd >= targetGcd;
+
         for (const materia of materiaSlots) {
           if (!materia.meldableGrades.includes(materia.grade!)) continue;
           if ((materia.gear.currentMeldableStats[speedStat] ?? 0) <= 0 && materia.stat !== speedStat) continue;
@@ -782,12 +788,30 @@ export const Store = mst.types
           const originalStat = materia.stat;
           materia.meld(speedStat);
           const newEffects = replica.equippedEffects;
-          if (newEffects !== undefined && newEffects.gcd < effects.gcd) {
-            if (newEffects.damage > bestDamage ||
-              (newEffects.damage === bestDamage && newEffects.gcd < bestGcd)) {
+
+          if (newEffects !== undefined && !Number.isNaN(newEffects.gcd) && newEffects.gcd < effects.gcd) {
+            const candidateAboveTarget = newEffects.gcd >= targetGcd;
+            const preferCandidate = () => {
               bestDamage = newEffects.damage;
               bestGcd = newEffects.gcd;
+              bestAboveTarget = candidateAboveTarget;
               bestMateria = materia;
+            };
+            if (bestMateria === undefined) {
+              preferCandidate();
+            } else if (candidateAboveTarget && !bestAboveTarget) {
+              preferCandidate();
+            } else if (candidateAboveTarget === bestAboveTarget) {
+              if (candidateAboveTarget) {
+                if (newEffects.gcd < bestGcd ||
+                  (newEffects.gcd === bestGcd && newEffects.damage > bestDamage)) {
+                  preferCandidate();
+                }
+              } else if (newEffects.gcd > bestGcd ||
+                (newEffects.gcd === bestGcd && newEffects.damage > bestDamage)) {
+                preferCandidate();
+              }
+
             }
           }
           materia.meld(originalStat);
@@ -836,7 +860,13 @@ export const Store = mst.types
         gearMateriaStats.set(gear.id, gear.materias.map(m => ({ stat: m.stat, grade: m.grade! })));
       }
       this.applyMateriaPlan(gearMateriaStats);
-      return { success: true, achievedGcd: effects.gcd, damage: effects.damage };
+
+      const finalEffects = this.equippedEffects;
+      if (finalEffects === undefined || Number.isNaN(finalEffects.gcd) || Number.isNaN(finalEffects.damage)) {
+        return { success: false };
+      }
+      return { success: true, achievedGcd: finalEffects.gcd, damage: finalEffects.damage };
+
     },
     toggleShowAllMaterias(): void {
       self.showAllMaterias = !self.showAllMaterias;
