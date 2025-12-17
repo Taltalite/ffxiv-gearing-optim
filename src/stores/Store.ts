@@ -739,7 +739,8 @@ export const Store = mst.types
         if (gear === undefined || gear.isFood) continue;
         for (const materia of gear.materias) {
 
-          const defaultGrade = materia.grade ?? materia.meldableGrades[0];
+          const meldableGrades = materia.meldableGrades;
+          const defaultGrade = materia.grade ?? meldableGrades[meldableGrades.length - 1];
           materia.meld(undefined, defaultGrade);
 
           materiaSlots.push(materia);
@@ -796,7 +797,7 @@ export const Store = mst.types
           const remaining = slot.gear.currentMeldableStats[speedStat] ?? 0;
           if (remaining <= 0) continue;
 
-          const grade = slot.grade ?? slot.meldableGrades[0];
+          const grade = slot.grade ?? slot.meldableGrades[slot.meldableGrades.length - 1];
           slot.meld(speedStat, grade);
 
           const candidateEffects = getEffects();
@@ -805,9 +806,7 @@ export const Store = mst.types
             pickedIndex = i;
             break;
           }
-
           slot.meld(undefined, grade);
-
         }
         if (pickedIndex === -1) {
           return { success: false, achievedGcd: effects.gcd, damage: effects.damage };
@@ -823,10 +822,8 @@ export const Store = mst.types
         for (const stat of candidateStats) {
           const remaining = materia.gear.currentMeldableStats[stat] ?? 0;
           if (remaining <= 0) continue;
-
-          const grade = materia.grade ?? materia.meldableGrades[0];
+          const grade = materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1];
           materia.meld(stat, grade);
-
           const newEffects = getEffects();
           if (newEffects !== undefined && !Number.isNaN(newEffects.gcd) && newEffects.gcd <= targetGcd + tolerance) {
             const smoothDamage = computeDamage(replica.equippedStats, false);
@@ -835,12 +832,10 @@ export const Store = mst.types
               bestStat = stat;
             }
           }
-
           materia.meld(undefined, grade);
         }
         if (bestStat !== undefined) {
-          materia.meld(bestStat, materia.grade ?? materia.meldableGrades[0]);
-
+          materia.meld(bestStat, materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1]);
         }
       }
 
@@ -850,7 +845,6 @@ export const Store = mst.types
       }
       if (finalEffects.gcd > targetGcd + tolerance) {
         return { success: false, achievedGcd: finalEffects.gcd, damage: finalEffects.damage };
-
       }
 
       const gearMateriaStats = new Map<G.GearId, { stat: G.Stat | undefined, grade: G.MateriaGrade }[]>();
@@ -859,13 +853,11 @@ export const Store = mst.types
         gearMateriaStats.set(gear.id, gear.materias.map(m => ({ stat: m.stat, grade: m.grade! })));
       }
       this.applyMateriaPlan(gearMateriaStats);
-
       const appliedEffects = this.equippedEffects;
       if (appliedEffects === undefined || Number.isNaN(appliedEffects.gcd) || Number.isNaN(appliedEffects.damage)) {
         return { success: false };
       }
       return { success: true, achievedGcd: appliedEffects.gcd, damage: appliedEffects.damage };
-
     },
     toggleShowAllMaterias(): void {
       self.showAllMaterias = !self.showAllMaterias;

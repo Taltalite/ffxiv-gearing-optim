@@ -187,7 +187,6 @@ const MateriaGcdOptimization = mobxReact.observer(() => {
           step={0.01}
           value={targetGcd}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargetGcd(e.target.value)}
-
         />
         <Button
           className="materia-gcd-optimization_button"
