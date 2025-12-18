@@ -780,6 +780,18 @@ export const Store = mst.types
       const baseStats = { ...replica.equippedStats };
       const tolerance = 0.001;
 
+      const compareStates = (a: MeldState, b: MeldState) => {
+        const overA = Math.max(0, a.gcd - (targetGcd + tolerance));
+        const overB = Math.max(0, b.gcd - (targetGcd + tolerance));
+        if (overA !== overB) return overA - overB;
+        const gapA = a.gcd <= targetGcd + tolerance ? targetGcd - a.gcd : Infinity;
+        const gapB = b.gcd <= targetGcd + tolerance ? targetGcd - b.gcd : Infinity;
+        if (gapA !== gapB) return gapA - gapB;
+        if (Math.abs(a.damage - b.damage) > 1e-6) return b.damage - a.damage;
+        if (Math.abs(a.smooth - b.smooth) > 1e-6) return b.smooth - a.smooth;
+        return a.gcd - b.gcd;
+      };
+
       interface MeldState {
         stats: G.Stats,
         used: Map<G.GearId, G.Stats>,
@@ -855,23 +867,21 @@ export const Store = mst.types
         for (const candidate of nextStates) {
           const key = `${tierKey(candidate.stats)}|${Math.round(candidate.gcd * 1000)}`;
           const prev = dedup.get(key);
-          if (prev === undefined ||
-            candidate.damage > prev.damage + 1e-6 ||
-            (Math.abs(candidate.damage - prev.damage) <= 1e-6 && candidate.smooth > prev.smooth)) {
+          if (prev === undefined || compareStates(candidate, prev) < 0) {
             dedup.set(key, candidate);
           }
         }
         beam = Array.from(dedup.values())
-          .sort((a, b) => b.smooth - a.smooth || b.damage - a.damage || a.gcd - b.gcd)
+          .sort(compareStates)
           .slice(0, beamWidth);
       }
 
       let best = beam
         .filter(state => state.gcd <= targetGcd + tolerance && !Number.isNaN(state.damage))
-        .sort((a, b) => b.damage - a.damage || b.smooth - a.smooth)[0];
+        .sort((a, b) => (targetGcd - a.gcd) - (targetGcd - b.gcd) || b.damage - a.damage || b.smooth - a.smooth)[0];
 
       if (best === undefined) {
-        best = beam.sort((a, b) => a.gcd - b.gcd || b.damage - a.damage)[0];
+        best = beam.sort(compareStates)[0];
       }
       if (best === undefined) return { success: false };
 
