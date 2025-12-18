@@ -195,8 +195,11 @@ const MateriaGcdOptimization = mobxReact.observer(() => {
           onClick={() => {
             const result = store.optimizeMateriaForGcd(Number(targetGcd));
             if (!result.success) {
-              setStatus(`无法满足目标GCD，当前可达到的GCD为 ${result.achievedGcd?.toFixed(2) ?? '--'}。` +
-                '请确认已选择所有装备和食物，或尝试放宽目标。');
+              const achieved = result.achievedGcd !== undefined && !Number.isNaN(result.achievedGcd)
+                ? result.achievedGcd.toFixed(2)
+                : '--';
+              setStatus(`未能完全满足目标GCD，当前方案 GCD 为 ${achieved}，已套用可行的最优方案。` +
+                '如需更快GCD，请尝试增加速度目标的宽容度或调整装备/食物。');
             } else {
               setStatus(`已套用方案：GCD ${result.achievedGcd?.toFixed(2)}，期望伤害 ${result.damage?.toFixed(3)}`);
             }
