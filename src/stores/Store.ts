@@ -715,7 +715,7 @@ export const Store = mst.types
         for (let i = 0; i < gear.materias.length; i++) {
           const materia = gear.materias[i];
           const plan = materiaStats[i];
-          const fallbackGrade = materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1];
+          const fallbackGrade = materia.grade ?? materia.meldableGrades[0];
           materia.grade = plan?.grade ?? fallbackGrade;
           materia.stat = plan?.stat;
         }
@@ -737,7 +737,7 @@ export const Store = mst.types
         if (gear === undefined || gear.isFood) continue;
         for (const materia of gear.materias) {
           const meldableGrades = materia.meldableGrades;
-          const defaultGrade = meldableGrades[meldableGrades.length - 1];
+          const defaultGrade = meldableGrades[0];
           materia.meld(undefined, defaultGrade);
           materiaSlots.push(materia);
         }
@@ -790,23 +790,35 @@ export const Store = mst.types
         let pickedIndex = -1;
         let pickedEffects: typeof effects | undefined;
         let pickedGain = 0;
+        let pickedImprovesGcd = false;
+        let pickedFlatGain = 0;
         for (let i = 0; i < speedQueue.length; i++) {
           const slot = speedQueue[i];
           const remaining = slot.gear.currentMeldableStats[speedStat] ?? 0;
           if (remaining <= 0) continue;
-          const grade = slot.grade ?? slot.meldableGrades[slot.meldableGrades.length - 1];
+          const grade = slot.grade ?? slot.meldableGrades[0];
           if (grade === undefined) continue;
           const beforeSpeed = replica.equippedStats[speedStat] ?? 0;
           slot.meld(speedStat, grade);
           const candidateEffects = getEffects();
           const afterSpeed = replica.equippedStats[speedStat] ?? beforeSpeed;
           const speedGain = afterSpeed - beforeSpeed;
-          if (candidateEffects !== undefined && !Number.isNaN(candidateEffects.gcd) && speedGain > 0) {
-            if (pickedEffects === undefined || candidateEffects.gcd < pickedEffects.gcd - tolerance ||
-              (Math.abs(candidateEffects.gcd - pickedEffects.gcd) <= tolerance && speedGain > pickedGain)) {
+          const candidateValid = candidateEffects !== undefined && !Number.isNaN(candidateEffects.gcd) && speedGain > 0;
+          if (candidateValid) {
+            if (candidateEffects.gcd < effects.gcd - tolerance) {
+              if (!pickedImprovesGcd ||
+                candidateEffects.gcd < pickedEffects!.gcd - tolerance ||
+                (Math.abs(candidateEffects.gcd - pickedEffects!.gcd) <= tolerance && speedGain > pickedGain)) {
+                pickedEffects = candidateEffects;
+                pickedIndex = i;
+                pickedGain = speedGain;
+                pickedImprovesGcd = true;
+              }
+            } else if (!pickedImprovesGcd && speedGain > pickedFlatGain) {
               pickedEffects = candidateEffects;
               pickedIndex = i;
               pickedGain = speedGain;
+              pickedFlatGain = speedGain;
             }
           }
           slot.meld(undefined, grade);
@@ -814,7 +826,7 @@ export const Store = mst.types
         if (pickedIndex === -1 || pickedEffects === undefined) {
           return { success: false, achievedGcd: effects.gcd, damage: effects.damage };
         }
-        speedQueue[pickedIndex].meld(speedStat, speedQueue[pickedIndex].grade ?? speedQueue[pickedIndex].meldableGrades[speedQueue[pickedIndex].meldableGrades.length - 1]);
+        speedQueue[pickedIndex].meld(speedStat, speedQueue[pickedIndex].grade ?? speedQueue[pickedIndex].meldableGrades[0]);
         effects = pickedEffects;
         speedQueue.splice(pickedIndex, 1);
       }
@@ -827,7 +839,7 @@ export const Store = mst.types
         for (const stat of candidateStats) {
           const remaining = materia.gear.currentMeldableStats[stat] ?? 0;
           if (remaining <= 0) continue;
-          const grade = materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1];
+          const grade = materia.grade ?? materia.meldableGrades[0];
           materia.meld(stat, grade);
           const newEffects = getEffects();
           if (newEffects !== undefined && !Number.isNaN(newEffects.gcd) && newEffects.gcd <= targetGcd + tolerance) {
@@ -840,7 +852,7 @@ export const Store = mst.types
           materia.meld(undefined, grade);
         }
         if (bestStat !== undefined) {
-          materia.meld(bestStat, materia.grade ?? materia.meldableGrades[materia.meldableGrades.length - 1]);
+          materia.meld(bestStat, materia.grade ?? materia.meldableGrades[0]);
         }
       }
 
