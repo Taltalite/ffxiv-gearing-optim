@@ -709,6 +709,201 @@ export const Store = mst.types
         }
       }
     },
+    applyMateriaPlan(gearMateriaStats: Map<G.GearId, { stat: G.Stat | undefined, grade: G.MateriaGrade }[]>): void {
+      for (const [ gearId, materiaStats ] of gearMateriaStats.entries()) {
+        const gear = self.gears.get(gearId as any) as IGear;
+        for (let i = 0; i < gear.materias.length; i++) {
+          const materia = gear.materias[i];
+          const plan = materiaStats[i];
+          const fallbackGrade = materia.grade ?? materia.meldableGrades[0];
+          materia.grade = plan?.grade ?? fallbackGrade;
+          materia.stat = plan?.stat;
+        }
+      }
+    },
+    optimizeMateriaForGcd(targetGcd: number): { success: boolean, achievedGcd?: number, damage?: number } {
+      if (Number.isNaN(targetGcd) || targetGcd <= 0) return { success: false };
+      if (self.job === undefined) return { success: false };
+      const speedStat: G.Stat | undefined = (self.schema.stats.includes('SKS') && 'SKS') ||
+        (self.schema.stats.includes('SPS') && 'SPS') || undefined;
+      if (speedStat === undefined) return { success: false };
+
+      const snapshot = mst.getSnapshot(self);
+      const replica = Store.create(snapshot);
+      replica.unprotect();
+
+      const materiaSlots: IMateria[] = [];
+      for (const gear of replica.equippedGears.values()) {
+        if (gear === undefined || gear.isFood) continue;
+        for (const materia of gear.materias) {
+          const meldableGrades = materia.meldableGrades;
+          const defaultGrade = meldableGrades[0];
+          materia.meld(undefined, defaultGrade);
+          materiaSlots.push(materia);
+        }
+      }
+
+      const candidateStats = ['CRT', 'DET', 'DHT', 'TEN'].filter(stat =>
+        self.schema.stats.includes(stat as G.Stat) && stat in G.materias) as G.Stat[];
+      if (self.schema.stats.includes(speedStat)) candidateStats.push(speedStat);
+      const levelMod = G.jobLevelModifiers[self.jobLevel];
+      const { statModifiers, mainStat, traitDamageMultiplier, partyBonus } = self.schema;
+      const gcdModifier = self.jobLevel >= 80 ? (statModifiers?.gcd ?? 100) : 100;
+
+      const floorFn = (value: number, useFloor: boolean) => useFloor ? Math.floor(value) : value;
+      const computeDamage = (stats: G.Stats, useFloor: boolean) => {
+        if (statModifiers === undefined || mainStat === undefined || traitDamageMultiplier === undefined) return -Infinity;
+        const floorOrNot = (value: number) => floorFn(value, useFloor);
+        const attackMainStat = mainStat === 'VIT' ? 'STR' : mainStat;
+        const bluAetherialMimicry = self.job === 'BLU' ? 200 : 0;
+        const weaponDamage = floorOrNot(levelMod.main * statModifiers[attackMainStat]! / 1000) +
+          ((mainStat === 'MND' || mainStat === 'INT' ? stats.MDMG : stats.PDMG) ?? 0) +
+          (self.job === 'BLU' ? G.bluMdmgAdditions[stats.INT! - self.baseStats.INT!] ?? 0 : 0);
+        const mainDamage = floorOrNot((mainStat === 'VIT' ? levelMod.apTank : levelMod.ap) *
+          (floorOrNot((stats[attackMainStat] ?? 0) * (partyBonus ?? 1.05)) - levelMod.main) / levelMod.main + 100) / 100;
+        const crtChance = floorOrNot(200 * (stats.CRT! - levelMod.sub) / levelMod.div + 50 + bluAetherialMimicry) / 1000;
+        const crtDamage = floorOrNot(200 * (stats.CRT! - levelMod.sub) / levelMod.div + 1400) / 1000;
+        const detDamage = floorOrNot((140 * (stats.DET! - levelMod.main) / levelMod.det + 1000) / levelMod.detTrunc) * levelMod.detTrunc / 1000;
+        const dhtChance = floorOrNot(550 * (stats.DHT! - levelMod.sub) / levelMod.div + bluAetherialMimicry) / 1000;
+        const tenDamage = floorOrNot(112 * ((stats.TEN ?? levelMod.sub) - levelMod.sub) / levelMod.div + 1000) / 1000;
+        return 0.01 * weaponDamage * mainDamage * detDamage * tenDamage * traitDamageMultiplier *
+          ((crtDamage - 1) * crtChance + 1) * (0.25 * dhtChance + 1);
+      };
+      const computeGcd = (stats: G.Stats) => {
+        const speed = stats[speedStat] ?? levelMod.sub;
+        const step1 = 1000 - Math.floor(130 * (speed - levelMod.sub) / levelMod.div);
+        const step2 = Math.floor(step1 * 2500 / 1000);
+        const step3 = Math.floor(step2 * gcdModifier / 1000);
+        return Math.floor(step3) / 100;
+      };
+
+      const baseStats = { ...replica.equippedStats };
+      const tolerance = 0.001;
+
+      const compareStates = (a: MeldState, b: MeldState) => {
+        const overA = Math.max(0, a.gcd - (targetGcd + tolerance));
+        const overB = Math.max(0, b.gcd - (targetGcd + tolerance));
+        if (overA !== overB) return overA - overB;
+        const gapA = a.gcd <= targetGcd + tolerance ? targetGcd - a.gcd : Infinity;
+        const gapB = b.gcd <= targetGcd + tolerance ? targetGcd - b.gcd : Infinity;
+        if (gapA !== gapB) return gapA - gapB;
+        if (Math.abs(a.damage - b.damage) > 1e-6) return b.damage - a.damage;
+        if (Math.abs(a.smooth - b.smooth) > 1e-6) return b.smooth - a.smooth;
+        return a.gcd - b.gcd;
+      };
+
+      interface MeldState {
+        stats: G.Stats,
+        used: Map<G.GearId, G.Stats>,
+        assignments: { stat: G.Stat | undefined, grade: G.MateriaGrade }[],
+        gcd: number,
+        damage: number,
+        smooth: number,
+      }
+
+      const initial: MeldState = {
+        stats: baseStats,
+        used: new Map(),
+        assignments: [],
+        gcd: computeGcd(baseStats),
+        damage: computeDamage(baseStats, true),
+        smooth: computeDamage(baseStats, false),
+      };
+
+      const gearCaps = new Map<G.GearId, G.Stats>();
+      for (const gear of replica.equippedGears.values()) {
+        if (gear === undefined || gear.isFood) continue;
+        gearCaps.set(gear.id, gear.totalMeldableStats);
+      }
+
+      const tierKey = (stats: G.Stats) => {
+        const crtTier = Math.floor(((stats.CRT ?? levelMod.sub) - levelMod.sub) / (levelMod.div / 200));
+        const detTier = Math.floor(((stats.DET ?? levelMod.main) - levelMod.main) / (levelMod.det / 140 * levelMod.detTrunc));
+        const dhtTier = Math.floor(((stats.DHT ?? levelMod.sub) - levelMod.sub) / (levelMod.div / 550));
+        const tenTier = Math.floor(((stats.TEN ?? levelMod.sub) - levelMod.sub) / (levelMod.div / 112));
+        const spdTier = Math.floor(((stats[speedStat] ?? levelMod.sub) - levelMod.sub) / (levelMod.div / 130));
+        return `${crtTier}/${detTier}/${dhtTier}/${tenTier}/${spdTier}`;
+      };
+
+      let beam: MeldState[] = [ initial ];
+      const beamWidth = 120;
+
+      materiaSlots.sort((a, b) => {
+        const aVal = G.materias[speedStat]![a.grade! - 1];
+        const bVal = G.materias[speedStat]![b.grade! - 1];
+        return bVal - aVal;
+      });
+
+      for (const slot of materiaSlots) {
+        const optionStats = [undefined, ...candidateStats] as (G.Stat | undefined)[];
+        const nextStates: MeldState[] = [];
+        for (const state of beam) {
+          const usedOfGear = state.used.get(slot.gear.id) ?? {};
+          for (const stat of optionStats) {
+            if (stat === undefined) {
+              const assignments = state.assignments.concat([{ stat: undefined, grade: slot.grade! }]);
+              nextStates.push({ ...state, assignments });
+              continue;
+            }
+            const cap = gearCaps.get(slot.gear.id)?.[stat] ?? 0;
+            const already = usedOfGear[stat] ?? 0;
+            const remaining = cap - already;
+            if (remaining <= 0) continue;
+            const materiaValue = G.materias[stat]?.[slot.grade! - 1];
+            if (materiaValue === undefined) continue;
+            const gain = Math.min(Math.max(remaining, 0), materiaValue);
+            if (gain <= 0) continue;
+            const stats = { ...state.stats, [stat]: (state.stats[stat] ?? 0) + gain };
+            const used = new Map(state.used);
+            used.set(slot.gear.id, { ...usedOfGear, [stat]: already + gain });
+            const gcd = computeGcd(stats);
+            const smooth = computeDamage(stats, false);
+            const damage = computeDamage(stats, true);
+            const assignments = state.assignments.concat([{ stat, grade: slot.grade! }]);
+            nextStates.push({ stats, used, assignments, gcd, damage, smooth });
+          }
+        }
+        const dedup = new Map<string, MeldState>();
+        for (const candidate of nextStates) {
+          const key = `${tierKey(candidate.stats)}|${Math.round(candidate.gcd * 1000)}`;
+          const prev = dedup.get(key);
+          if (prev === undefined || compareStates(candidate, prev) < 0) {
+            dedup.set(key, candidate);
+          }
+        }
+        beam = Array.from(dedup.values())
+          .sort(compareStates)
+          .slice(0, beamWidth);
+      }
+
+      let best = beam
+        .filter(state => state.gcd <= targetGcd + tolerance && !Number.isNaN(state.damage))
+        .sort((a, b) => (targetGcd - a.gcd) - (targetGcd - b.gcd) || b.damage - a.damage || b.smooth - a.smooth)[0];
+
+      if (best === undefined) {
+        best = beam.sort(compareStates)[0];
+      }
+      if (best === undefined) return { success: false };
+
+      const gearMateriaStats = new Map<G.GearId, { stat: G.Stat | undefined, grade: G.MateriaGrade }[]>();
+      for (let i = 0; i < materiaSlots.length; i++) {
+        const slot = materiaSlots[i];
+        const plan = best.assignments[i] ?? { stat: undefined, grade: slot.grade! };
+        const arr = gearMateriaStats.get(slot.gear.id) ?? new Array(slot.gear.materias.length).fill(undefined);
+        arr[slot.index] = { stat: plan.stat, grade: plan.grade };
+        gearMateriaStats.set(slot.gear.id, arr);
+      }
+
+      this.applyMateriaPlan(gearMateriaStats);
+      const appliedEffects = this.equippedEffects;
+      if (appliedEffects === undefined || Number.isNaN(appliedEffects.gcd) || Number.isNaN(appliedEffects.damage)) {
+        return { success: false, achievedGcd: best.gcd, damage: best.damage };
+      }
+      if (appliedEffects.gcd > targetGcd + tolerance) {
+        return { success: false, achievedGcd: appliedEffects.gcd, damage: appliedEffects.damage };
+      }
+      return { success: true, achievedGcd: appliedEffects.gcd, damage: appliedEffects.damage };
+    },
     toggleShowAllMaterias(): void {
       self.showAllMaterias = !self.showAllMaterias;
     },
