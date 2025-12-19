@@ -117,7 +117,16 @@
   width: 200px;
 }
 
+.materia-gcd-optimization_actions {
+  display: flex;
+  gap: 10px;
+}
+
 .materia-gcd-optimization_button {
+  height: 36px;
+}
+
+.materia-gcd-optimization_clear {
   height: 36px;
 }
 
@@ -128,4 +137,21 @@
 .materia-gcd-optimization_status {
   margin-top: 8px;
   font-weight: bold;
+}
+
+.materia-gcd-optimization_solutions {
+  margin-top: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.materia-gcd-optimization_introduce {
+  padding: 9px 16px 4px;
+  line-height: 20px;
+  border-bottom: 1px solid #e0e0e0;
+  p {
+    margin-top: 0;
+    margin-bottom: 5px;
+  }
 }

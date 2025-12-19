@@ -38,6 +38,7 @@ export const Store = mst.types
     tiersShown: localStorage.getItem(tiersShownStorageKey) === 'true',
     materiaOverallActiveTab: 0,
     autoSelectScheduled: false,
+    gcdDetDhtSolutions: [] as { DET: number, DHT: number, plan: { gearId: G.GearId, materias: { stat: G.Stat | undefined, grade: G.MateriaGrade }[] }[] }[],
   }))
   .views(self => ({
     get filteredIds(): G.GearId[] {
@@ -721,6 +722,23 @@ export const Store = mst.types
         }
       }
     },
+    applySerializedMateriaPlan(plan: { gearId: G.GearId, materias: { stat: G.Stat | undefined, grade: G.MateriaGrade }[] }[]): void {
+      const gearMateriaStats = new Map<G.GearId, { stat: G.Stat | undefined, grade: G.MateriaGrade }[]>();
+      for (const entry of plan) {
+        gearMateriaStats.set(entry.gearId, entry.materias);
+      }
+      this.applyMateriaPlan(gearMateriaStats);
+    },
+    clearAllMaterias(): void {
+      for (const gear of self.equippedGears.values()) {
+        if (gear === undefined || gear.isFood) continue;
+        for (const materia of gear.materias) {
+          const fallbackGrade = materia.grade ?? materia.meldableGrades[0];
+          materia.meld(undefined, fallbackGrade);
+        }
+      }
+      self.gcdDetDhtSolutions = [];
+    },
     optimizeMateriaForGcd(targetGcd: number): { success: boolean, achievedGcd?: number, damage?: number } {
       if (Number.isNaN(targetGcd) || targetGcd <= 0) return { success: false };
       if (self.job === undefined) return { success: false };
@@ -895,10 +913,30 @@ export const Store = mst.types
       }
 
       this.applyMateriaPlan(gearMateriaStats);
+      const basePlan = gearMateriaStats;
       const appliedEffects = this.equippedEffects;
       if (appliedEffects === undefined || Number.isNaN(appliedEffects.gcd) || Number.isNaN(appliedEffects.damage)) {
+        self.gcdDetDhtSolutions = [];
         return { success: false, achievedGcd: best.gcd, damage: best.damage };
       }
+      const detDhtSolutions = mobx.untracked(() => this.materiaDetDhtOptimized);
+      self.gcdDetDhtSolutions = detDhtSolutions.map(solution => {
+        const mergedPlan = new Map(basePlan);
+        for (const [ gearId, stats ] of solution.gearMateriaStats.entries()) {
+          const gear = self.gears.get(gearId as any) as IGear;
+          const source = mergedPlan.get(gearId) ?? gear.materias.map(m => ({ stat: m.stat, grade: m.grade ?? m.meldableGrades[0] }));
+          const updated = source.map((entry, idx) => {
+            const overlay = stats[idx];
+            if (overlay === undefined) return entry;
+            const slot = gear.materias[idx];
+            return { stat: overlay, grade: slot.meldableGrades[0] };
+          });
+          mergedPlan.set(gearId, updated);
+        }
+        const plan = Array.from(mergedPlan.entries())
+          .map(([ gearId, materias ]) => ({ gearId, materias }));
+        return { DET: solution.DET, DHT: solution.DHT, plan };
+      });
       if (appliedEffects.gcd > targetGcd + tolerance) {
         return { success: false, achievedGcd: appliedEffects.gcd, damage: appliedEffects.damage };
       }
