@@ -6,15 +6,22 @@ import { Button } from '@rmwc/button';
 import { Tab, TabBar } from '@rmwc/tabs';
 import { Switch } from '@rmwc/switch';
 import { Badge } from '@rmwc/badge';
+import { TextField } from '@rmwc/textfield';
 import * as G from '../game';
 import { useStore } from './components/contexts';
 
 export const MateriaOverallPanel = mobxReact.observer(() => {
   const store = useStore();
   const materiaDetDhtOptimizationAvailable = !store.isViewing && store.schema.mainStat !== undefined;
+  const materiaGcdOptimizationAvailable = !store.isViewing &&
+    (store.schema.stats.includes('SKS') || store.schema.stats.includes('SPS'));
   let activeTab = store.materiaOverallActiveTab;
-  if (activeTab === 1 && !materiaDetDhtOptimizationAvailable) {
+  if ((activeTab === 1 && !materiaDetDhtOptimizationAvailable) ||
+    (activeTab === 2 && !materiaGcdOptimizationAvailable)) {
     activeTab = 0;
+    if (store.materiaOverallActiveTab !== 0) {
+      store.setMateriaOverallActiveTab(0);
+    }
   }
   return (
     <div className="materia-overall card">
@@ -34,6 +41,9 @@ export const MateriaOverallPanel = mobxReact.observer(() => {
               信念/直击分配优化
               <Badge className="badge-button_badge" exited={!store.promotion.get('materiaDetDhtOptimization')} />
             </Tab>
+          )}
+          {materiaGcdOptimizationAvailable && (
+            <Tab>GCD自动镶嵌</Tab>
           )}
         </TabBar>
       </div>
@@ -100,6 +110,9 @@ export const MateriaOverallPanel = mobxReact.observer(() => {
       {activeTab === 1 && (
         <MateriaDetDhtOptimization />
       )}
+      {activeTab === 2 && materiaGcdOptimizationAvailable && (
+        <MateriaGcdOptimization />
+      )}
     </div>
   );
 });
@@ -148,6 +161,108 @@ const MateriaDetDhtOptimization = mobxReact.observer(() => {
       <div className="materia-det-dht-optimization_tip">
         方案按增伤期望从高到低排序，所有方案的差距小于万分之三。
       </div>
+    </div>
+  );
+});
+
+const MateriaGcdOptimization = mobxReact.observer(() => {
+  const store = useStore();
+  const speedStat = (store.schema.stats.includes('SKS') && 'SKS') ||
+    (store.schema.stats.includes('SPS') && 'SPS');
+  const equippedEffects = store.equippedEffects;
+  const [ targetGcd, setTargetGcd ] = React.useState<string>(() =>
+    (equippedEffects?.gcd ?? 2.5).toFixed(2));
+  const [ status, setStatus ] = React.useState<string>('');
+  const equippedAllGears = store.schema.slots.every(slot => store.equippedGears.get(slot.slot.toString()) !== undefined);
+  const equippedFood = store.equippedGears.get('-1') !== undefined;
+  const ready = equippedAllGears && equippedFood;
+
+  return (
+    <div className="materia-gcd-optimization">
+      <div className="materia-gcd-optimization_form">
+        <TextField
+          className="materia-gcd-optimization_input"
+          label="目标GCD（秒）"
+          type="number"
+          step={0.01}
+          value={targetGcd}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargetGcd(e.target.value)}
+        />
+        <div className="materia-gcd-optimization_actions">
+          <Button
+            className="materia-gcd-optimization_button"
+            raised
+            disabled={!ready || speedStat === undefined}
+            onClick={() => {
+              const result = store.optimizeMateriaForGcd(Number(targetGcd));
+              if (!result.success) {
+                const achieved = result.achievedGcd !== undefined && !Number.isNaN(result.achievedGcd)
+                  ? result.achievedGcd.toFixed(2)
+                  : '--';
+                setStatus(`未能完全满足目标GCD，当前方案 GCD 为 ${achieved}，已套用可行的最优方案。` +
+                  '如需更快GCD，请尝试增加速度目标的宽容度或调整装备/食物。');
+              } else {
+                setStatus(`已套用方案：GCD ${result.achievedGcd?.toFixed(2)}，期望伤害 ${result.damage?.toFixed(3)}`);
+              }
+            }}
+          >
+            计算并套用
+          </Button>
+          <Button
+            outlined
+            className="materia-gcd-optimization_clear"
+            onClick={() => {
+              store.clearAllMaterias();
+              setStatus('');
+            }}
+          >
+            清除全部镶嵌
+          </Button>
+        </div>
+      </div>
+      <div className="materia-gcd-optimization_hint">
+        {ready ? `当前GCD：${equippedEffects?.gcd.toFixed(2) ?? '--'}，` : '请先选齐所有装备并选择食物后再尝试。'}
+        仅在保持目标GCD的前提下尝试最大化每威力伤害期望。
+      </div>
+      {status.length > 0 && (
+        <div className="materia-gcd-optimization_status">{status}</div>
+      )}
+      {store.gcdDetDhtSolutions.length > 0 && (
+        <div className="materia-gcd-optimization_solutions">
+          <div className="materia-gcd-optimization_introduce">
+            <p>已满足目标 GCD，以下为不同信念/直击配比的伤害最优方案，均保留当前速度镶嵌。</p>
+            <p>方案按增伤期望从高到低排序，属性均使用该孔可镶嵌的最高等级魔晶石。</p>
+          </div>
+          <table className="table">
+            <thead>
+            <tr>
+              <th>信念</th>
+              <th>直击</th>
+              <th style={{ width: '99%' }} />
+            </tr>
+            </thead>
+            <tbody>
+            {store.gcdDetDhtSolutions.map((solution, i) => (
+              <tr key={i}>
+                <td>{solution.DET}</td>
+                <td>{solution.DHT}</td>
+                <td>
+                  {(solution.DET === store.equippedStats['DET'] && solution.DHT === store.equippedStats['DHT']) ? (
+                    '已使用此方案'
+                  ) : (
+                    <Button
+                      className="materia-det-dht-optimization_use-solution"
+                      onClick={() => store.applySerializedMateriaPlan(solution.plan)}
+                      children="使用此方案"
+                    />
+                  )}
+                </td>
+              </tr>
+            ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 });
